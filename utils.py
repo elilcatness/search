@@ -90,7 +90,7 @@ def get_url_queries(url: str, st_date: str, end_date: str, creds: dict, folder: 
                    'dimensions': headers,
                    'rowLimit': API_ROWS_LIMIT,
                    'startRow': start_row}
-        current_rows = _execute_request(service, url, request).get('rows', [])
+        current_rows = _execute_request(service, domain, request).get('rows', [])
         current_rows = [row for row in current_rows]
         raw_output.extend(current_rows)
         start_row += API_ROWS_LIMIT
@@ -99,7 +99,8 @@ def get_url_queries(url: str, st_date: str, end_date: str, creds: dict, folder: 
         keys = row.pop('keys')
         data = {headers[i]: keys[i] for i in range(len(keys))}
         output.append({**data, **row})
-    save_data(path, output)
+    if not os.path.exists(path):
+        save_data(path, output)
     return [row for row in output if row['page'].rstrip('/') == url.rstrip('/')]
 
 
@@ -135,5 +136,5 @@ def process_url(url: str, st_date: str, end_date: str, creds: dict, folder: str,
             output[d['query']] = {'freq_html': html.count(d['query'].lower()),
                                   'freq_text': text.count(d['query'].lower()),
                                   'impressions': d['impressions'],
-                                  'clicks': d['clicks'], 'position': int(float(d['position']))}
+                                  'clicks': d['clicks'], 'position': float(d['position'])}
     return output
