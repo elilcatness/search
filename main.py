@@ -12,14 +12,18 @@ from constants import FIELDNAMES
 def task(data: dict):
     length = len(data['urls'])
     filename = os.path.join(data['output_folder'], f'{data["number"]}.csv')
-    write_headers(filename, FIELDNAMES)
+    fieldnames = FIELDNAMES + [x.capitalize() for x in data['extra_fields']]
+    write_headers(filename, fieldnames)
     for i, url in enumerate(data['urls']):
-        for key, val in process_url(url, data['st_date'], data['end_date'], data['creds'],
-                                    data['temp_folder'], headers=data['headers']).items():
-            write_row({'URL': url, 'Query': key, 'Frequency_HTML': val['freq_html'],
-                       'Frequency_TEXT': val['freq_text'], 'Impressions': val['impressions'],
-                       'Clicks': val['clicks'], 'Position': val['position']},
-                      filename, FIELDNAMES)
+        for d in process_url(url, data['st_date'], data['end_date'], data['creds'],
+                             data['temp_folder'], headers=data['headers'],
+                             extra_fields=data['extra_fields']):
+            row = {'URL': url, 'Query': d['query'], 'Frequency_HTML': d['freq_html'],
+                   'Frequency_TEXT': d['freq_text'], 'Impressions': d['impressions'],
+                   'Clicks': d['clicks'], 'Position': d['position']}
+            for field in data['extra_fields']:
+                row[field.capitalize()] = d[field]
+            write_row(row, filename, fieldnames)
         print(f'[{i + 1}/{length}] {data["urls"][i]}')
 
 
@@ -34,6 +38,10 @@ def main(input_filename: str, headers_filename: str = 'headers.txt',
             return
         rmtree(temp_folder)
     processes_count = int(input('Введите количество процессов: '))
+    extra_fields = []
+    for name, verbose_name in ('country', 'странам'), ('device', 'устройствам'):
+        if input(f'Делаем ли разбивку по {verbose_name}? (y\\n) ').lower() == 'y':
+            extra_fields.append(name)
     os.mkdir(temp_folder)
     st_date, end_date = retrieve_dates()
     headers = retrieve_headers(headers_filename)
@@ -54,7 +62,8 @@ def main(input_filename: str, headers_filename: str = 'headers.txt',
         tasks.append({'number': i + 1, 'urls': urls[start:end - 1],
                       'st_date': st_date, 'end_date': end_date,
                       'headers': headers, 'creds': creds, 'output_filename': output_filename,
-                      'output_folder': output_folder, 'temp_folder': temp_folder})
+                      'output_folder': output_folder, 'temp_folder': temp_folder,
+                      'extra_fields': extra_fields})
     pool = Pool(processes=processes_count)
     pool.map(task, tasks)
     filenames = [os.path.join(output_folder, f_name)

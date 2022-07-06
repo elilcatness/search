@@ -7,7 +7,7 @@ from oauth2client.service_account import ServiceAccountCredentials
 from csv import DictWriter, DictReader
 import json
 from selenium.webdriver import Chrome, ChromeOptions
-from selenium.common.exceptions import WebDriverException
+from selenium.common.exceptions import WebDriverException, NoSuchElementException
 from selenium.webdriver.common.by import By
 
 from constants import API_ROWS_LIMIT, TEMP_FIELDNAMES
@@ -69,19 +69,23 @@ def load_data_from_file(filename: str):
         return list(DictReader(f, TEMP_FIELDNAMES, delimiter=';'))[1:]
 
 
-def save_data(filename: str, data: list):
-    write_headers(filename, TEMP_FIELDNAMES)
+def save_data(filename: str, data: list, extra_fields: list = None):
+    extra_fields = extra_fields if extra_fields and isinstance(extra_fields, list) else []
+    fieldnames = TEMP_FIELDNAMES + extra_fields
+    write_headers(filename, fieldnames)
     for row in data:
-        write_row(row, filename, TEMP_FIELDNAMES)
+        write_row(row, filename, fieldnames)
 
 
-def get_url_queries(url: str, st_date: str, end_date: str, creds: dict, folder: str):
+def get_url_queries(url: str, st_date: str, end_date: str, creds: dict, folder: str,
+                    extra_fields: list = None):
+    extra_fields = extra_fields if extra_fields and isinstance(extra_fields, list) else []
     domain = get_domain(url)
     path = os.path.join(folder, f"{'_'.join(domain.split('://'))}.csv")
     if os.path.exists(path):
         return [row for row in load_data_from_file(path) if row['page'].rstrip('/') == url.rstrip('/')]
     service = get_console(creds)
-    headers = ['page', 'query']
+    headers = ['page', 'query'] + extra_fields
     start_row = 0
     raw_output, current_rows = [], []
     while len(current_rows) == API_ROWS_LIMIT or start_row == 0:
@@ -100,13 +104,14 @@ def get_url_queries(url: str, st_date: str, end_date: str, creds: dict, folder: 
         data = {headers[i]: keys[i] for i in range(len(keys))}
         output.append({**data, **row})
     if not os.path.exists(path):
-        save_data(path, output)
+        save_data(path, output, extra_fields)
     return [row for row in output if row['page'].rstrip('/') == url.rstrip('/')]
 
 
 def get_driver(headers: str):
     options = ChromeOptions()
     options.add_argument(f'user-agent={headers}')
+    options.add_experimental_option('excludeSwitches', ['enable-logging'])
     return Chrome(options=options)
 
 
@@ -114,27 +119,36 @@ def get_text(url: str, headers: str, attempts_limit: int = 3):
     attempts = 0
     while attempts < attempts_limit:
         attempts += 1
+        driver = get_driver(headers)
         try:
-            driver = get_driver(headers)
             driver.get(url)
-            time.sleep(2)
-            return driver.page_source.lower(), driver.find_element(By.TAG_NAME, 'html').text.lower()
         except WebDriverException:
-            pass
+            continue
+        time.sleep(2)
+        try:
+            return driver.page_source.lower(), driver.find_element(By.TAG_NAME, 'html').text.lower()
+        except NoSuchElementException:
+            return driver.page_source.lower(), ''
     raise Exception(f'Failed to parse text from {url}')
 
 
-def process_url(url: str, st_date: str, end_date: str, creds: dict, folder: str, headers: str = ''):
-    data = get_url_queries(url, st_date, end_date, creds, folder)
-    output = {}
+def process_url(url: str, st_date: str, end_date: str, creds: dict, folder: str,
+                headers: str = '', extra_fields: list = None):
+    extra_fields = extra_fields if extra_fields and isinstance(extra_fields, list) else []
+    data = get_url_queries(url, st_date, end_date, creds, folder, extra_fields=extra_fields)
+    output = []
+    if not data:
+        return output
     html, text = get_text(url, headers)
     for d in data:
-        if output.get(d['query']):
-            output[d['query']]['freq_html'] += html.count(d['query'].lower())
-            output[d['query']]['freq_text'] += text.count(d['query'].lower())
-        else:
-            output[d['query']] = {'freq_html': html.count(d['query'].lower()),
-                                  'freq_text': text.count(d['query'].lower()),
-                                  'impressions': d['impressions'],
-                                  'clicks': d['clicks'], 'position': float(d['position'])}
+        row = {'query': d['query'], 'freq_html': html.count(d['query'].lower()),
+               'freq_text': text.count(d['query'].lower()),
+               'impressions': d['impressions'],
+               'clicks': d['clicks'], 'position': float(d['position'])}
+        for i, field in enumerate(extra_fields):
+            try:
+                row[field] = d[field]
+            except KeyError:
+                row[field] = d[None][i]
+        output.append(row)
     return output
